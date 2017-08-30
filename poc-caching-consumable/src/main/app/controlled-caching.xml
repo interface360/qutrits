@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:signature="http://www.mulesoft.org/schema/mule/signature" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/signature http://www.mulesoft.org/schema/mule/signature/current/mule-signature.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd">
+	<signature:config name="SignatureX" enableLanguage="true" doc:name="Signature">
+		<signature:jce-signer-config algorithm="HmacMD5" key="JLfl5sER3kt4oVkzP2d39UQrUxrEK63LjmXAO45b6cU=" />
+	</signature:config>
+    <expression-filter expression="#[#[flowVars.cacheResponse==true]]" name="CacheExpressionFilter" doc:name="Expression"/> 
+
+<spring:beans> 
+<spring:bean id="payloadResponseGenerator" class="com.mulesoft.support.PayloadResponseGenerator" name="Bean"/> 
+</spring:beans> 
+    <http:listener-config name="HTTP_LISTENER_POC" host="0.0.0.0" port="8081" doc:name="HTTP Listener Configuration"/>
+    <http:request-config name="HTTP_REQUEST_POC" host="localhost" port="8081" doc:name="HTTP Request Configuration"/>
+     <ee:object-store-caching-strategy name="Caching_Strategy"  doc:name="Caching Strategy" consumableFilter-ref="CacheExpressionFilter"/>
+<!--      <ee:object-store-caching-strategy name="Caching_Strategy"  doc:name="Caching Strategy" />
+ -->
+     <flow name="mf-simulate-cache-flow">
+        <http:listener config-ref="HTTP_LISTENER_POC" path="/cache" allowedMethods="POST" doc:name="HTTP"/>
+        <set-variable variableName="cacheResponse" value="#[message.?inboundProperties['http.query.params'].?cache]" doc:name="FV Set cacheResponse"/>
+        <ee:cache cachingStrategy-ref="Caching_Strategy" doc:name="Caching response based on cacheResposne flag">
+            <http:request config-ref="HTTP_REQUEST_POC" path="/cache-test" method="POST" doc:name="HTTP Invoke Test POST Cache"/>
+            <byte-array-to-string-transformer doc:name="Byte Array to String"/>
+<!--
+             <object-to-string-transformer doc:name="Object to String"/>
+ -->
+            <choice doc:name="CHECK If cacheResponse is TRUE">
+                <when expression="#[flowVars.cacheResponse != true]">
+                    <set-variable variableName="cacheResponse" value="false" doc:name="set cacheResponse=false"/>
+                    <logger message="Do NOT cache response" level="INFO" doc:name="LOG INFO Do not cache"/>
+                </when>
+                <otherwise>
+                    <logger message="Cache response" level="INFO" doc:name="LOG INFO Cache Response"/>
+                </otherwise>
+            </choice>
+         </ee:cache>
+        <logger level="INFO" doc:name="LOG Info"/>
+    </flow>
+    <flow name="mf-post-cache-test-flow">
+        <http:listener config-ref="HTTP_LISTENER_POC" path="/cache-test" allowedMethods="POST" doc:name="HTTP"/>
+        <dw:transform-message doc:name="DW Test Data">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+{
+	"second": "data from HTTP",
+	"now": now,
+	"myKey": "1234567890",
+	"myKeys":{
+		"key1":"11111111",
+		"key2":"22222222",
+		"signedKey":""
+	}
+}]]></dw:set-payload>
+        </dw:transform-message>
+        <enricher source="#[org.mule.util.Base64.encodeBytes(flowVars.mySignedKey.toString().getBytes())]" target="#[payload.myKeys.signedKey]" doc:name="ME Set myKeys.signedKey">
+           <signature:sign config-ref="SignatureX" input-ref="#[payload.myKeys.key2]" variable="#['mySignedKey']" doc:name="Digital Signature HMACMD5"/>
+        </enricher>
+        <json:object-to-json-transformer doc:name="Transform Object to JSON"/>
+        <set-property propertyName="http.status" value="#[201]" doc:name="Set HTTP Status 201"/>
+    </flow>
+</mule>
