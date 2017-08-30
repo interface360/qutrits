@@ -1,0 +1,2 @@
+# qutrits
+Just for fun
